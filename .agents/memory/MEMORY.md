@@ -1,0 +1,1 @@
+- [Persistent Python workflows](workflow-persistence.md) — keep watchdog processes in the foreground so Replit can supervise and restart them.
