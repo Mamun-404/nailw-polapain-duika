@@ -24,5 +24,18 @@
     "opened_at": 1786726370,
     "status": "open",
     "notification_sent": false
+  },
+  {
+    "id": "EURCAD-1786727177",
+    "symbol": "EURCAD",
+    "direction": "DOWN 🔻",
+    "entry": 1.60512,
+    "sl": 1.60668,
+    "tp": 1.60278,
+    "timeframe": 15,
+    "confidence": 99.0,
+    "opened_at": 1786727177,
+    "status": "open",
+    "notification_sent": true
   }
 ]

@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
 import time
 import traceback
 from datetime import datetime, timezone
@@ -328,6 +329,59 @@ def telegram_send(text):
     except Exception as exc:
         logger.warning("Telegram send failed: %s", exc)
         return False
+
+
+def telegram_send_photo(image_path, caption):
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id or not image_path:
+        return False
+    try:
+        with open(image_path, "rb") as image:
+            response = requests.post(
+                f"https://api.telegram.org/bot{token}/sendPhoto",
+                data={"chat_id": chat_id, "caption": caption},
+                files={"photo": image},
+                timeout=30,
+            )
+        response.raise_for_status()
+        return True
+    except Exception as exc:
+        logger.warning("Telegram chart send failed: %s", exc)
+        return False
+
+
+def _render_signal_chart(symbol, candles, direction, entry, sl, tp):
+    """Render a compact chart image for the Telegram signal notification."""
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        recent = candles[-80:]
+        closes = [float(c["close"]) for c in recent]
+        if len(closes) < 10:
+            return None
+        fig, axis = plt.subplots(figsize=(10, 5), dpi=140)
+        axis.plot(range(len(closes)), closes, color="#2563eb", linewidth=1.8, label="Close")
+        axis.axhline(entry, color="#111827", linewidth=1.1, linestyle="--", label=f"Entry {entry}")
+        axis.axhline(sl, color="#dc2626", linewidth=1.1, linestyle="--", label=f"SL {sl}")
+        axis.axhline(tp, color="#16a34a", linewidth=1.1, linestyle="--", label=f"TP {tp}")
+        axis.set_title(f"{symbol} • {direction} • {len(recent)} closed candles")
+        axis.set_xlabel("Recent candles")
+        axis.set_ylabel("Price")
+        axis.grid(alpha=0.2)
+        axis.legend(loc="upper left", fontsize=8)
+        fig.tight_layout()
+        image_path = tempfile.NamedTemporaryFile(prefix="ux50_signal_", suffix=".png", delete=False).name
+        fig.savefig(image_path, format="png")
+        plt.close(fig)
+        return image_path
+    except Exception as exc:
+        logger.warning("Signal chart render failed: %s", exc)
+        return None
+
 
 def ux_atr(highs, lows, closes, period=14):
     if len(closes) < period + 1:
@@ -1477,7 +1531,17 @@ def _quality_status(symbol):
     return True, f"quality {winrate:.1f}% over {signals} signals", row
 
 
-def _record_open_signal(symbol, direction, entry, sl, tp, timeframe, confidence, notification_sent=False):
+def _record_open_signal(
+    symbol,
+    direction,
+    entry,
+    sl,
+    tp,
+    timeframe,
+    confidence,
+    notification_sent=False,
+    chart_sent=False,
+):
     opened_at = int(time.time())
     signal = {
         "id": f"{symbol}-{opened_at}",
@@ -1491,6 +1555,7 @@ def _record_open_signal(symbol, direction, entry, sl, tp, timeframe, confidence,
         "opened_at": opened_at,
         "status": "open",
         "notification_sent": bool(notification_sent),
+        "chart_sent": bool(chart_sent),
     }
     opened = _read_json(OPEN_SIGNALS_FILE, [])
     opened.append(signal)
@@ -1512,8 +1577,11 @@ def _settle_signals_from_candles(candles):
     for signal in opened:
         future = [c for c in candles if int(c.get("at", 0)) > int(signal.get("opened_at", 0))]
         result = None
+        result_basis = None
+        exit_price = None
         direction = str(signal.get("direction", "")).upper()
-        for candle in future[:max(1, int(os.getenv("EXNESS_OUTCOME_LOOKAHEAD", "12")))]:
+        lookahead = max(1, int(os.getenv("EXNESS_OUTCOME_LOOKAHEAD", "12")))
+        for candle in future[:lookahead]:
             high = float(candle.get("high", 0.0)); low = float(candle.get("low", 0.0))
             sl = float(signal.get("sl", 0.0)); tp = float(signal.get("tp", 0.0))
             is_buy = "UP" in direction or "BUY" in direction
@@ -1521,11 +1589,31 @@ def _settle_signals_from_candles(candles):
             hit_tp = high >= tp if is_buy else low <= tp
             if hit_sl and hit_tp:
                 result = "loss"  # conservative when both occur in one candle
+                result_basis = "SL+TP same candle (conservative SL)"
+                exit_price = sl
                 break
             if hit_sl:
-                result = "loss"; break
+                result = "loss"
+                result_basis = "SL hit"
+                exit_price = sl
+                break
             if hit_tp:
-                result = "win"; break
+                result = "win"
+                result_basis = "TP hit"
+                exit_price = tp
+                break
+        if result is None and len(future) >= lookahead:
+            # Do not leave a signal open forever. At expiry, compare the last
+            # closed candle with entry and report the result transparently.
+            expiry_candle = future[lookahead - 1]
+            exit_price = float(expiry_candle.get("close", signal.get("entry", 0.0)))
+            entry_price = float(signal.get("entry", 0.0))
+            is_buy = "UP" in direction or "BUY" in direction
+            if abs(exit_price - entry_price) < max(abs(entry_price) * 1e-6, 1e-9):
+                result = "push"
+            else:
+                result = "win" if (exit_price > entry_price if is_buy else exit_price < entry_price) else "loss"
+            result_basis = f"{lookahead} candle expiry close"
         if result is None:
             remaining.append(signal)
             continue
@@ -1534,18 +1622,37 @@ def _settle_signals_from_candles(candles):
         row["signals"] = int(row.get("signals", 0))
         row["wins"] = int(row.get("wins", 0))
         row["losses"] = int(row.get("losses", 0))
+        row["pushes"] = int(row.get("pushes", 0))
         row["signals"] += 1
         if result == "win":
             row["wins"] += 1; row["consecutive_losses"] = 0
-        else:
+        elif result == "loss":
             row["losses"] += 1; row["consecutive_losses"] = int(row.get("consecutive_losses", 0)) + 1
+        else:
+            row["pushes"] += 1; row["consecutive_losses"] = 0
         settled_at = int(time.time())
         row["last_result"] = result
         row["last_settled_at"] = settled_at
         for history_row in reversed(history):
             if history_row.get("id") == signal.get("id"):
-                history_row.update({"status": "settled", "result": result, "settled_at": settled_at})
+                history_row.update(
+                    {
+                        "status": "settled",
+                        "result": result,
+                        "result_basis": result_basis,
+                        "exit_price": exit_price,
+                        "settled_at": settled_at,
+                    }
+                )
                 break
+        outcome_label = {"win": "PROFIT", "loss": "LOSS", "push": "PUSH"}[result]
+        result_icon = {"win": "✅", "loss": "❌", "push": "➖"}[result]
+        telegram_send(
+            f"{result_icon} *{outcome_label}*\n"
+            f"{symbol} • {direction} • {signal.get('timeframe')}M\n"
+            f"Entry: `{signal.get('entry')}` → Exit: `{exit_price}`\n"
+            f"{result_basis}"
+        )
         changed += 1
     if changed:
         _write_json(PREMIUM_STATS_FILE, stats)
@@ -1897,35 +2004,38 @@ async def run_signal_cycle(bridge: FreeFeedBridge, symbol: str, timeframe: int =
         meta["compression"] = "BB breakout setup"
     session_now = datetime.now(timezone.utc)
     session_tag = "COMEX" if _family_of(symbol) in ("metal",) else (_family_of(symbol).upper())
-    lots_line = f"🪙 *LOTS:* `{lots['lots']:.2f}` (risk {lots['risk_pct']:.0f}% / ${lots['balance']:.0f})\n" if lots else ""
-    throttle = f"🔀 *HTF RSI/ADX:* `{meta['htf_rsi']}/{meta['htf_adx']}`\n"
-    if confirmation_meta.get("h4_trend"):
-        throttle += f"🕐 *4H TREND:* `{meta['h4_trend']} (ADX {meta['h4_adx']})`\n"
-    if meta.get("macd_hist") is not None:
-        throttle += f"⏳ *HTF MACD:* `{meta['macd_hist']}`\n"
+    direction_label = "BUY" if "UP" in str(direction).upper() or "BUY" in str(direction).upper() else "SELL"
     message = (
-        f"💎 *UX50 PRO • {mode_tag}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📊 *PAIR:* `{symbol}`  🕒 `{timeframe}M`  🏷 `{session_tag}`\n"
-        f"📈 *DIRECTION:* *{direction}*\n"
-        f"💵 *ENTRY:* `{entry}`\n"
-        f"🛡 *STOP LOSS:* `{sl}`\n"
-        f"🎯 *TAKE PROFIT:* `{tp}`\n"
-        f"⚖️ *R:R:* `{rr:.2f}`\n"
-        f"🧠 *CONFIDENCE:* `{confidence:.1f}%`  🎯 *ACC:* `{acc_score:.1f}/100`\n"
-        f"{throttle}"
-        f"📏 *SPREAD:* `{meta['spread_points']} points`{' • ' + meta['compression'] if meta.get('compression') else ''}\n"
-        f"📈 *PAIR STATS:* `{meta['quality_winrate']:.1f}% / {meta['settled_count']} settled`\n"
-        f"📝 *PATTERN:* `{meta.get('pattern_name', 'filtered setup')}`\n"
-        f"{lots_line}"
-        f"✅ *CONFIRMATION:* `{'; '.join(confirmation_notes)}`\n"
-        f"———————————————\n"
-        f"*Signal-only advisory • {session_now.strftime('%Y-%m-%d %H:%M')} UTC • verify in walk-forward demo*"
+        f"📊 *{symbol} {direction_label}* • `{timeframe}M`\n"
+        f"Entry: `{entry}`\n"
+        f"SL: `{sl}` | TP: `{tp}`\n"
+        f"Conf: `{confidence:.0f}%` | RR: `{rr:.2f}`\n"
+        f"MTF 1H+4H confirmed • `{session_now.strftime('%H:%M')} UTC`"
     )
     notification_sent = telegram_send(message)
+    chart_path = _render_signal_chart(symbol, candles, direction_label, entry, sl, tp)
+    chart_sent = telegram_send_photo(
+        chart_path,
+        f"{symbol} {direction_label} • Entry {entry} | SL {sl} | TP {tp}",
+    )
+    if chart_path:
+        try:
+            os.unlink(chart_path)
+        except OSError:
+            pass
     # Result tracking must not depend on Telegram being configured. Signals
     # are always persisted locally and later settled from closed candles.
-    _record_open_signal(symbol, direction, entry, sl, tp, timeframe, confidence, notification_sent)
+    _record_open_signal(
+        symbol,
+        direction,
+        entry,
+        sl,
+        tp,
+        timeframe,
+        confidence,
+        notification_sent,
+        chart_sent,
+    )
     _LAST_SIGNAL_AT[symbol] = now
     return {"symbol": symbol, "direction": direction, "entry": entry, "sl": sl, "tp": tp, "strategy": meta, "confidence": confidence, "accuracy": acc_score, "quality_score": acc_score}
 
