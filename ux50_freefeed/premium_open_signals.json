@@ -1,0 +1,28 @@
+[
+  {
+    "id": "US30-1786726358",
+    "symbol": "US30",
+    "direction": "UP 🟩",
+    "entry": 53732.26953,
+    "sl": 53640.01116,
+    "tp": 53870.65709,
+    "timeframe": 15,
+    "confidence": 99.0,
+    "opened_at": 1786726358,
+    "status": "open",
+    "notification_sent": false
+  },
+  {
+    "id": "NAS100-1786726370",
+    "symbol": "NAS100",
+    "direction": "UP 🟩",
+    "entry": 29978.44336,
+    "sl": 29899.72224,
+    "tp": 30096.52504,
+    "timeframe": 15,
+    "confidence": 99.0,
+    "opened_at": 1786726370,
+    "status": "open",
+    "notification_sent": false
+  }
+]
