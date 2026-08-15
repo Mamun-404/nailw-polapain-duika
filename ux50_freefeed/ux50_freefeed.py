@@ -189,7 +189,7 @@ class FreeFeedBridge:
             pass
         return cached
 
-    async def candles(self, symbol: str, minutes: int = 15, count: int = 160):
+    async def candles(self, symbol: str, minutes: int = 15, count: int = 160, force_refresh: bool = False):
         if not self.connected:
             return []
         base = str(symbol or "").strip().upper().replace("/", "").replace("-", "")
@@ -197,7 +197,7 @@ class FreeFeedBridge:
         key = f"{base}:{interval}"
         now = time.time()
         cached = FreeFeedBridge._cache.get(key)
-        if cached and now - FreeFeedBridge._last_fetch_at.get(key, 0.0) < FreeFeedBridge.CACHE_TTL:
+        if cached and not force_refresh and now - FreeFeedBridge._last_fetch_at.get(key, 0.0) < FreeFeedBridge.CACHE_TTL:
             return cached["candles"]
         last_price = cached.get("price") if cached else None
         last_out = cached["candles"] if cached else []
@@ -272,15 +272,16 @@ class FreeFeedBridge:
             FreeFeedBridge._last_fetch_at[key] = now
         return out
 
-    async def quote(self, symbol: str):
+    async def quote(self, symbol: str, minutes: int = 5, force_refresh: bool = False):
         if not self.connected:
             return None
         base = str(symbol or "").strip().upper().replace("/", "").replace("-", "")
-        key = f"{base}:15m"
+        interval = self.timeframe(minutes)
+        key = f"{base}:{interval}"
         entry = FreeFeedBridge._cache.get(key)
         price = float(entry["price"]) if entry and entry.get("price") else None
-        if price is None:
-            candles = await self.candles(symbol, 15, count=5)
+        if force_refresh or price is None:
+            candles = await self.candles(symbol, minutes, count=5, force_refresh=force_refresh)
             if not candles:
                 return None
             price = float(candles[-1]["close"])
@@ -313,6 +314,18 @@ def levels_from_candles(symbol, candles, direction):
     compact = str(symbol).upper().replace("/", "")
     digits = 3 if compact.endswith("JPY") else (2 if compact.startswith("XAU") else 5)
     return round(entry, digits), round(sl, digits), round(tp, digits)
+
+
+def _timeframe_label(minutes):
+    minutes = int(minutes or 0)
+    if minutes >= 60 and minutes % 60 == 0:
+        return f"{minutes // 60}H"
+    return f"{minutes}M"
+
+
+def _price_digits(symbol):
+    compact = str(symbol or "").upper().replace("/", "").replace("-", "")
+    return FreeFeedBridge.DIGITS.get(compact, 3 if compact.endswith("JPY") else (2 if compact.startswith("XAU") else 5))
 
 
 def telegram_send(text):
@@ -351,29 +364,100 @@ def telegram_send_photo(image_path, caption):
         return False
 
 
-def _render_signal_chart(symbol, candles, direction, entry, sl, tp):
-    """Render a compact chart image for the Telegram signal notification."""
+def _render_signal_chart(symbol, candles, direction, entry, sl, tp, timeframe=60):
+    """Render a professional dark candlestick chart for Telegram."""
     try:
         import matplotlib
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+        from matplotlib.patches import Rectangle
 
         recent = candles[-80:]
-        closes = [float(c["close"]) for c in recent]
-        if len(closes) < 10:
+        if len(recent) < 10:
             return None
-        fig, axis = plt.subplots(figsize=(10, 5), dpi=140)
-        axis.plot(range(len(closes)), closes, color="#2563eb", linewidth=1.8, label="Close")
-        axis.axhline(entry, color="#111827", linewidth=1.1, linestyle="--", label=f"Entry {entry}")
-        axis.axhline(sl, color="#dc2626", linewidth=1.1, linestyle="--", label=f"SL {sl}")
-        axis.axhline(tp, color="#16a34a", linewidth=1.1, linestyle="--", label=f"TP {tp}")
-        axis.set_title(f"{symbol} • {direction} • {len(recent)} closed candles")
-        axis.set_xlabel("Recent candles")
-        axis.set_ylabel("Price")
-        axis.grid(alpha=0.2)
-        axis.legend(loc="upper left", fontsize=8)
-        fig.tight_layout()
+        fig, (axis, volume_axis) = plt.subplots(
+            2,
+            1,
+            figsize=(11, 6.5),
+            dpi=150,
+            sharex=True,
+            gridspec_kw={"height_ratios": [4, 1], "hspace": 0.05},
+        )
+        fig.patch.set_facecolor("#08111f")
+        for current_axis in (axis, volume_axis):
+            current_axis.set_facecolor("#0d1b2a")
+            current_axis.tick_params(colors="#cbd5e1", labelsize=8)
+            for spine in current_axis.spines.values():
+                spine.set_color("#334155")
+            current_axis.grid(color="#64748b", alpha=0.18, linewidth=0.6)
+
+        candle_dates = []
+        for index, candle in enumerate(recent):
+            timestamp = candle.get("at")
+            candle_dates.append(
+                datetime.fromtimestamp(float(timestamp), tz=timezone.utc)
+                if timestamp
+                else datetime.now(timezone.utc)
+            )
+            opened = float(candle["open"])
+            high = float(candle["high"])
+            low = float(candle["low"])
+            close = float(candle["close"])
+            color = "#22c55e" if close >= opened else "#ef4444"
+            axis.vlines(index, low, high, color=color, linewidth=1.0, zorder=2)
+            body_bottom = min(opened, close)
+            body_height = max(abs(close - opened), (high - low) * 0.015, 1e-12)
+            axis.add_patch(
+                Rectangle(
+                    (index - 0.32, body_bottom),
+                    0.64,
+                    body_height,
+                    facecolor=color,
+                    edgecolor=color,
+                    linewidth=0.7,
+                    alpha=0.95,
+                    zorder=3,
+                )
+            )
+            volume_axis.bar(
+                index,
+                float(candle.get("volume", 0.0) or 0.0),
+                color=color,
+                width=0.64,
+                alpha=0.55,
+            )
+
+        digits = _price_digits(symbol)
+        axis.axhline(entry, color="#f8fafc", linewidth=1.15, linestyle=(0, (5, 3)), label=f"Entry {entry:.{digits}f}")
+        axis.axhline(sl, color="#fb7185", linewidth=1.15, linestyle=(0, (5, 3)), label=f"SL {sl:.{digits}f}")
+        axis.axhline(tp, color="#4ade80", linewidth=1.15, linestyle=(0, (5, 3)), label=f"TP {tp:.{digits}f}")
+        axis.set_title(
+            f"{symbol}  |  {_timeframe_label(timeframe)}  |  {direction}  |  UX50 Signal",
+            color="#f8fafc",
+            fontsize=13,
+            fontweight="bold",
+            loc="left",
+            pad=12,
+        )
+        axis.set_ylabel("Price", color="#cbd5e1")
+        volume_axis.set_ylabel("Volume", color="#cbd5e1")
+        volume_axis.set_xlabel("UTC time", color="#cbd5e1")
+        axis.legend(loc="upper left", fontsize=8, facecolor="#0d1b2a", edgecolor="#475569", labelcolor="#e2e8f0")
+        axis.set_xlim(-1, len(recent))
+        axis.margins(y=0.08)
+        tick_count = min(8, len(recent))
+        tick_indexes = [round(i * (len(recent) - 1) / max(1, tick_count - 1)) for i in range(tick_count)]
+        axis.set_xticks(tick_indexes)
+        axis.set_xticklabels([])
+        volume_axis.set_xticks(tick_indexes)
+        volume_axis.set_xticklabels(
+            [candle_dates[index].strftime("%d %b\n%H:%M") for index in tick_indexes],
+            color="#cbd5e1",
+            fontsize=8,
+        )
+        volume_axis.set_xlim(-1, len(recent))
+        fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.12, hspace=0.05)
         image_path = tempfile.NamedTemporaryFile(prefix="ux50_signal_", suffix=".png", delete=False).name
         fig.savefig(image_path, format="png")
         plt.close(fig)
@@ -1554,6 +1638,8 @@ def _record_open_signal(
         "confidence": confidence,
         "opened_at": opened_at,
         "status": "open",
+        "last_status": "AT ENTRY",
+        "current_price": entry,
         "notification_sent": bool(notification_sent),
         "chart_sent": bool(chart_sent),
     }
@@ -1566,7 +1652,7 @@ def _record_open_signal(
     return signal
 
 
-def _settle_signals_from_candles(candles):
+def _settle_signals_from_candles(candles, symbol=None, timeframe=None):
     opened = _read_json(OPEN_SIGNALS_FILE, [])
     if not opened or not candles:
         return 0
@@ -1575,6 +1661,12 @@ def _settle_signals_from_candles(candles):
     stats = _read_json(PREMIUM_STATS_FILE, {})
     history = _read_json(SIGNAL_HISTORY_FILE, [])
     for signal in opened:
+        if symbol and str(signal.get("symbol", "")).upper() != str(symbol).upper():
+            remaining.append(signal)
+            continue
+        if timeframe and int(signal.get("timeframe", 0) or 0) != int(timeframe):
+            remaining.append(signal)
+            continue
         future = [c for c in candles if int(c.get("at", 0)) > int(signal.get("opened_at", 0))]
         result = None
         result_basis = None
@@ -1649,7 +1741,7 @@ def _settle_signals_from_candles(candles):
         result_icon = {"win": "✅", "loss": "❌", "push": "➖"}[result]
         telegram_send(
             f"{result_icon} *{outcome_label}*\n"
-            f"{symbol} • {direction} • {signal.get('timeframe')}M\n"
+            f"{symbol} • {direction} • {_timeframe_label(signal.get('timeframe', 0))}\n"
             f"Entry: `{signal.get('entry')}` → Exit: `{exit_price}`\n"
             f"{result_basis}"
         )
@@ -1658,6 +1750,73 @@ def _settle_signals_from_candles(candles):
         _write_json(PREMIUM_STATS_FILE, stats)
         _write_json(OPEN_SIGNALS_FILE, remaining)
         _write_json(SIGNAL_HISTORY_FILE, history[-1000:])
+    return changed
+
+
+async def _settle_open_signals_with_bridge(bridge):
+    """Settle each open signal with candles from its own symbol/timeframe."""
+    opened = _read_json(OPEN_SIGNALS_FILE, [])
+    groups = {}
+    for signal in opened:
+        key = (str(signal.get("symbol", "")).upper(), int(signal.get("timeframe", 60) or 60))
+        if key[0]:
+            groups.setdefault(key, None)
+    changed = 0
+    for (symbol, timeframe) in groups:
+        candles = await bridge.candles(symbol, timeframe, count=500)
+        if len(candles) >= 2:
+            changed += _settle_signals_from_candles(candles, symbol=symbol, timeframe=timeframe)
+    return changed
+
+
+def _open_signal_status(signal, current_price):
+    entry = float(signal.get("entry", 0.0))
+    sl = float(signal.get("sl", entry))
+    is_buy = "UP" in str(signal.get("direction", "")).upper() or "BUY" in str(signal.get("direction", "")).upper()
+    move = (current_price - entry) if is_buy else (entry - current_price)
+    risk = max(abs(entry - sl), 1e-12)
+    r_multiple = move / risk
+    if abs(move) < risk * 0.01:
+        label, icon = "AT ENTRY", "⚪"
+    elif move > 0:
+        label, icon = "PROFIT", "🟢"
+    else:
+        label, icon = "LOSS", "🔴"
+    return label, icon, r_multiple
+
+
+async def _send_open_signal_statuses(bridge):
+    """Send one compact Telegram update for every currently open signal."""
+    opened = _read_json(OPEN_SIGNALS_FILE, [])
+    if not opened:
+        return 0
+    lines = ["📡 *OPEN SIGNAL UPDATE* • every 5 minutes"]
+    changed = 0
+    for signal in opened:
+        symbol = str(signal.get("symbol", "")).upper()
+        if not symbol:
+            continue
+        quote = await bridge.quote(symbol, minutes=5, force_refresh=True)
+        if not quote:
+            lines.append(f"⚪ {symbol} — price unavailable")
+            continue
+        current_price = float(quote["bid"])
+        label, icon, r_multiple = _open_signal_status(signal, current_price)
+        digits = _price_digits(symbol)
+        signal["last_status"] = label
+        signal["current_price"] = current_price
+        signal["unrealized_r"] = round(r_multiple, 3)
+        signal["status_updated_at"] = int(time.time())
+        changed += 1
+        lines.append(
+            f"{icon} *{symbol} {('BUY' if 'UP' in str(signal.get('direction', '')).upper() or 'BUY' in str(signal.get('direction', '')).upper() else 'SELL')}* — "
+            f"*{label}* `{r_multiple:+.2f}R`\n"
+            f"Entry `{float(signal.get('entry', 0)):.{digits}f}` | Now `{current_price:.{digits}f}` | "
+            f"SL `{float(signal.get('sl', 0)):.{digits}f}` | TP `{float(signal.get('tp', 0)):.{digits}f}`"
+        )
+    if changed:
+        _write_json(OPEN_SIGNALS_FILE, opened)
+        telegram_send("\n".join(lines))
     return changed
 
 
@@ -1910,7 +2069,7 @@ def _session_allowed(symbol):
     return allowed, f"UTC {hour:02d}:00 session"
 
 
-async def run_signal_cycle(bridge: FreeFeedBridge, symbol: str, timeframe: int = 15):
+async def run_signal_cycle(bridge: FreeFeedBridge, symbol: str, timeframe: int = 60):
     now = time.time()
     cooldown = max(300, int(os.getenv("EXNESS_SIGNAL_COOLDOWN_SECONDS", "900")))
     if now - _LAST_SIGNAL_AT.get(symbol, 0.0) < cooldown:
@@ -1926,7 +2085,7 @@ async def run_signal_cycle(bridge: FreeFeedBridge, symbol: str, timeframe: int =
     candles = await bridge.candles(symbol, timeframe, count=220)
     if len(candles) < 60:
         return None
-    settled = _settle_signals_from_candles(candles)
+    settled = 0
     market_ok, market_reasons = _premium_market_quality(candles)
     if not market_ok:
         logger.info("Skipped %s: market quality: %s", symbol, "; ".join(market_reasons))
@@ -1943,7 +2102,7 @@ async def run_signal_cycle(bridge: FreeFeedBridge, symbol: str, timeframe: int =
     if not confirmed:
         logger.info("Skipped %s: %s", symbol, "; ".join(confirmation_notes))
         return None
-    quote = await bridge.quote(symbol)
+    quote = await bridge.quote(symbol, minutes=timeframe)
     if quote is None:
         return None
     spread_points = (quote["ask"] - quote["bid"]) / max(quote["point"], 1e-12)
@@ -2006,14 +2165,14 @@ async def run_signal_cycle(bridge: FreeFeedBridge, symbol: str, timeframe: int =
     session_tag = "COMEX" if _family_of(symbol) in ("metal",) else (_family_of(symbol).upper())
     direction_label = "BUY" if "UP" in str(direction).upper() or "BUY" in str(direction).upper() else "SELL"
     message = (
-        f"📊 *{symbol} {direction_label}* • `{timeframe}M`\n"
+        f"📊 *{symbol} {direction_label}* • `{_timeframe_label(timeframe)}`\n"
         f"Entry: `{entry}`\n"
         f"SL: `{sl}` | TP: `{tp}`\n"
         f"Conf: `{confidence:.0f}%` | RR: `{rr:.2f}`\n"
-        f"MTF 1H+4H confirmed • `{session_now.strftime('%H:%M')} UTC`"
+        f"MTF 4H confirmed • `{session_now.strftime('%H:%M')} UTC`"
     )
     notification_sent = telegram_send(message)
-    chart_path = _render_signal_chart(symbol, candles, direction_label, entry, sl, tp)
+    chart_path = _render_signal_chart(symbol, candles, direction_label, entry, sl, tp, timeframe)
     chart_sent = telegram_send_photo(
         chart_path,
         f"{symbol} {direction_label} • Entry {entry} | SL {sl} | TP {tp}",
@@ -2053,13 +2212,17 @@ async def main():
         return
     logger.info("Signal-only mode enabled; no orders will be placed")
     symbols = [x.strip() for x in os.getenv("EXNESS_SYMBOLS", "EURUSD,GBPUSD,USDJPY,XAUUSD").split(",") if x.strip()]
-    timeframe = int(os.getenv("EXNESS_TIMEFRAME_MINUTES", "15"))
+    timeframe = int(os.getenv("EXNESS_TIMEFRAME_MINUTES", "60"))
     interval = max(30, int(os.getenv("EXNESS_SCAN_SECONDS", "60")))
     status_every = int(os.getenv("EXNESS_STATUS_EVERY_SECONDS", "1800"))
     _loop_cursor = 0
     _last_status = 0.0
     try:
         while True:
+            try:
+                await _settle_open_signals_with_bridge(bridge)
+            except Exception:
+                logger.error("Open-signal settlement pass failed", exc_info=True)
             for symbol in symbols:
                 try:
                     await run_signal_cycle(bridge, symbol, timeframe)
@@ -2069,6 +2232,10 @@ async def main():
             _loop_cursor += 1
             if time.time() - _last_status >= status_every:
                 _last_status = time.time()
+                try:
+                    await _send_open_signal_statuses(bridge)
+                except Exception:
+                    logger.error("Open-signal status pass failed", exc_info=True)
                 stats = _read_json(PREMIUM_STATS_FILE, {})
                 total_sigs = sum(int(r.get("signals", 0)) for r in stats.values())
                 total_wins = sum(int(r.get("wins", 0)) for r in stats.values())

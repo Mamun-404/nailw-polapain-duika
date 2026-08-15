@@ -1,41 +1,30 @@
 [
   {
-    "id": "US30-1786726358",
-    "symbol": "US30",
-    "direction": "UP 🟩",
-    "entry": 53732.26953,
-    "sl": 53640.01116,
-    "tp": 53870.65709,
-    "timeframe": 15,
-    "confidence": 99.0,
-    "opened_at": 1786726358,
-    "status": "open",
-    "notification_sent": false
-  },
-  {
-    "id": "NAS100-1786726370",
-    "symbol": "NAS100",
-    "direction": "UP 🟩",
-    "entry": 29978.44336,
-    "sl": 29899.72224,
-    "tp": 30096.52504,
-    "timeframe": 15,
-    "confidence": 99.0,
-    "opened_at": 1786726370,
-    "status": "open",
-    "notification_sent": false
-  },
-  {
-    "id": "EURCAD-1786727177",
-    "symbol": "EURCAD",
+    "id": "ETHUSD-1786750817",
+    "symbol": "ETHUSD",
     "direction": "DOWN 🔻",
-    "entry": 1.60512,
-    "sl": 1.60668,
-    "tp": 1.60278,
+    "entry": 1879.16003,
+    "sl": 1882.46859,
+    "tp": 1874.1972,
     "timeframe": 15,
     "confidence": 99.0,
-    "opened_at": 1786727177,
+    "opened_at": 1786750817,
     "status": "open",
-    "notification_sent": true
+    "notification_sent": true,
+    "chart_sent": true
+  },
+  {
+    "id": "ETHUSD-1786751737",
+    "symbol": "ETHUSD",
+    "direction": "DOWN 🔻",
+    "entry": 1878.52002,
+    "sl": 1881.90037,
+    "tp": 1873.4495,
+    "timeframe": 15,
+    "confidence": 94.2,
+    "opened_at": 1786751737,
+    "status": "open",
+    "notification_sent": true,
+    "chart_sent": true
   }
 ]

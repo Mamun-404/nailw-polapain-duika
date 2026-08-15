@@ -1,0 +1,65 @@
+{
+  "US30": {
+    "signals": 2,
+    "wins": 1,
+    "losses": 1,
+    "pushes": 0,
+    "consecutive_losses": 0,
+    "last_result": "win",
+    "last_settled_at": 1786746937
+  },
+  "NAS100": {
+    "signals": 1,
+    "wins": 0,
+    "losses": 1,
+    "pushes": 0,
+    "consecutive_losses": 1,
+    "last_result": "loss",
+    "last_settled_at": 1786728106
+  },
+  "EURCAD": {
+    "signals": 2,
+    "wins": 1,
+    "losses": 1,
+    "pushes": 0,
+    "consecutive_losses": 1,
+    "last_result": "loss",
+    "last_settled_at": 1786746937
+  },
+  "GBPAUD": {
+    "signals": 1,
+    "wins": 0,
+    "losses": 1,
+    "pushes": 0,
+    "consecutive_losses": 1,
+    "last_result": "loss",
+    "last_settled_at": 1786746936
+  },
+  "DOGEUSD": {
+    "signals": 1,
+    "wins": 0,
+    "losses": 1,
+    "pushes": 0,
+    "consecutive_losses": 1,
+    "last_result": "loss",
+    "last_settled_at": 1786748426
+  },
+  "BCHUSD": {
+    "signals": 1,
+    "wins": 0,
+    "losses": 1,
+    "pushes": 0,
+    "consecutive_losses": 1,
+    "last_result": "loss",
+    "last_settled_at": 1786748427
+  },
+  "ETHUSD": {
+    "signals": 1,
+    "wins": 0,
+    "losses": 1,
+    "pushes": 0,
+    "consecutive_losses": 1,
+    "last_result": "loss",
+    "last_settled_at": 1786750625
+  }
+}
