@@ -11,7 +11,11 @@
     "opened_at": 1786750817,
     "status": "open",
     "notification_sent": true,
-    "chart_sent": true
+    "chart_sent": true,
+    "last_status": "LOSS",
+    "current_price": 1880.1600341796875,
+    "unrealized_r": -0.302,
+    "status_updated_at": 1786752365
   },
   {
     "id": "ETHUSD-1786751737",
@@ -25,6 +29,10 @@
     "opened_at": 1786751737,
     "status": "open",
     "notification_sent": true,
-    "chart_sent": true
+    "chart_sent": true,
+    "last_status": "LOSS",
+    "current_price": 1880.1600341796875,
+    "unrealized_r": -0.485,
+    "status_updated_at": 1786752367
   }
 ]
