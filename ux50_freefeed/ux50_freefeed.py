@@ -301,16 +301,65 @@ class FreeFeedBridge:
         self.connected = False
 
 
-def levels_from_candles(symbol, candles, direction):
+def _find_swings(candles, window=3, lookback=70):
+    lows = [float(c["low"]) for c in candles[-lookback:]]
+    highs = [float(c["high"]) for c in candles[-lookback:]]
+    swing_lows, swing_highs = [], []
+    for i in range(window, len(lows) - window):
+        seg_low = lows[i - window:i + window + 1]
+        seg_high = highs[i - window:i + window + 1]
+        if lows[i] == min(seg_low):
+            swing_lows.append(lows[i])
+        if highs[i] == max(seg_high):
+            swing_highs.append(highs[i])
+    return swing_lows, swing_highs
+
+
+def levels_from_candles(symbol, candles, direction, bid=None, ask=None):
     if not candles:
         return None, None, None
-    entry = float(candles[-1]["close"])
-    atr = _calc_atr(candles, 14) or max(float(candles[-1]["high"]) - float(candles[-1]["low"]), entry * 0.0005)
-    stop_distance = max(atr * 1.5, entry * 0.0008)
-    take_distance = max(atr * 2.25, stop_distance * 1.30)
+    last = candles[-1]
+    atr = _calc_atr(candles, 14) or max(float(last["high"]) - float(last["low"]), float(last["close"]) * 0.0005)
     is_buy = "UP" in str(direction).upper() or "BUY" in str(direction).upper()
-    sl = entry - stop_distance if is_buy else entry + stop_distance
-    tp = entry + take_distance if is_buy else entry - take_distance
+    ref = float(last["close"])
+    if is_buy and ask:
+        entry = float(ask)
+    elif (not is_buy) and bid:
+        entry = float(bid)
+    else:
+        entry = ref
+    swing_lows, swing_highs = _find_swings(candles)
+    min_dist = atr * 0.8
+    if is_buy:
+        below = [l for l in swing_lows if l < entry - atr * 0.3]
+        nearest_low = max(below) if below else None
+        structure_sl = (nearest_low - atr * 0.2) if nearest_low else entry - atr * 1.5
+        sl_dist = max(entry - structure_sl, min_dist)
+        if sl_dist > atr * 3.0:
+            return None, None, None
+        sl = entry - sl_dist
+        candidates = [h for h in swing_highs if h > entry + atr * 0.5]
+        if candidates:
+            tp = min(candidates)
+        else:
+            tp = entry + atr * 2.25
+        tp = max(tp, entry + 1.35 * (entry - sl))
+        tp = min(tp, entry + atr * 4.5)
+    else:
+        above = [h for h in swing_highs if h > entry + atr * 0.3]
+        nearest_high = min(above) if above else None
+        structure_sl = (nearest_high + atr * 0.2) if nearest_high else entry + atr * 1.5
+        sl_dist = max(structure_sl - entry, min_dist)
+        if sl_dist > atr * 3.0:
+            return None, None, None
+        sl = entry + sl_dist
+        candidates = [l for l in swing_lows if l < entry - atr * 0.5]
+        if candidates:
+            tp = max(candidates)
+        else:
+            tp = entry - atr * 2.25
+        tp = min(tp, entry - 1.35 * (sl - entry))
+        tp = max(tp, entry - atr * 4.5)
     compact = str(symbol).upper().replace("/", "")
     digits = 3 if compact.endswith("JPY") else (2 if compact.startswith("XAU") else 5)
     return round(entry, digits), round(sl, digits), round(tp, digits)
@@ -2098,6 +2147,17 @@ async def run_signal_cycle(bridge: FreeFeedBridge, symbol: str, timeframe: int =
     direction = strategy_result if isinstance(strategy_result, str) else (strategy_result.get("direction") or strategy_result.get("signal") or strategy_result.get("trend"))
     if not direction:
         return None
+    up_side = "UP" in str(direction).upper() or "BUY" in str(direction).upper()
+    tf_closes = [float(c["close"]) for c in candles]
+    ema21_list = _calc_ema(tf_closes, 21)
+    if len(ema21_list) >= 3:
+        ema_slope = ema21_list[-1] - ema21_list[-3]
+        if up_side and ema_slope < 0:
+            logger.info("Skipped %s: EMA21 falling, against BUY direction", symbol)
+            return None
+        if (not up_side) and ema_slope > 0:
+            logger.info("Skipped %s: EMA21 rising, against SELL direction", symbol)
+            return None
     confirmed, confirmation_notes, confirmation_meta = await _advanced_confirmation(bridge, symbol, timeframe, direction)
     if not confirmed:
         logger.info("Skipped %s: %s", symbol, "; ".join(confirmation_notes))
@@ -2116,7 +2176,7 @@ async def run_signal_cycle(bridge: FreeFeedBridge, symbol: str, timeframe: int =
     if confidence < min_confidence:
         logger.info("Skipped %s: confidence %.1f < %.1f", symbol, confidence, min_confidence)
         return None
-    entry, sl, tp = levels_from_candles(symbol, candles, direction)
+    entry, sl, tp = levels_from_candles(symbol, candles, direction, bid=quote["bid"], ask=quote["ask"])
     if entry is None or sl is None or tp is None:
         return None
     risk = abs(entry - sl)
@@ -2199,6 +2259,21 @@ async def run_signal_cycle(bridge: FreeFeedBridge, symbol: str, timeframe: int =
     return {"symbol": symbol, "direction": direction, "entry": entry, "sl": sl, "tp": tp, "strategy": meta, "confidence": confidence, "accuracy": acc_score, "quality_score": acc_score}
 
 
+def _is_weekend(now_utc=None):
+    dt = now_utc or datetime.now(timezone.utc)
+    return dt.weekday() >= 5
+
+
+def _telegram_announce(text):
+    if os.getenv("EXNESS_TELEGRAM_STATUS", "1") != "1":
+        return False
+    try:
+        return telegram_send(text)
+    except Exception:
+        logger.warning("Telegram announce failed", exc_info=True)
+        return False
+
+
 async def main():
     print_status_message("┌────────────────────────────────────────────┐", "info")
     print_status_message("│   UX50 PRO v2.0 • ADAPTIVE MTF ENGINE         │", "info")
@@ -2215,21 +2290,63 @@ async def main():
     timeframe = int(os.getenv("EXNESS_TIMEFRAME_MINUTES", "60"))
     interval = max(30, int(os.getenv("EXNESS_SCAN_SECONDS", "60")))
     status_every = int(os.getenv("EXNESS_STATUS_EVERY_SECONDS", "1800"))
+    pass_summary_every = max(1, int(os.getenv("EXNESS_TELEGRAM_PASS_EVERY", "6")))
+    verbose = os.getenv("EXNESS_TELEGRAM_VERBOSE", "0") == "1"
     _loop_cursor = 0
     _last_status = 0.0
+    _last_weekend_msg = 0.0
+    tg_configured = bool(os.getenv("TELEGRAM_BOT_TOKEN", "").strip() and os.getenv("TELEGRAM_CHAT_ID", "").strip())
+    _telegram_announce(
+        "UX50 SIGNAL BOT STARTED\n"
+        f"Markets: {len(symbols)}\n"
+        f"Timeframe: {timeframe}m | scan every {interval}s\n"
+        "Feed: Yahoo FreeFeed connected\n"
+        "Mode: signal-only advisory\n"
+        f"Telegram: {'ON' if tg_configured else 'NOT CONFIGURED (logs only)'}"
+    )
     try:
         while True:
+            if _is_weekend():
+                if time.time() - _last_weekend_msg >= 3600:
+                    _last_weekend_msg = time.time()
+                    print_status_message("WEEKEND - market closed, scanning paused", "warning")
+                    _telegram_announce(
+                        "WEEKEND DETECTED\n"
+                        "Market closed (Sat/Sun UTC).\n"
+                        "Scanning paused. Will resume automatically after weekend."
+                    )
+                await asyncio.sleep(3600)
+                continue
             try:
                 await _settle_open_signals_with_bridge(bridge)
             except Exception:
                 logger.error("Open-signal settlement pass failed", exc_info=True)
+            signals_found = 0
             for symbol in symbols:
                 try:
-                    await run_signal_cycle(bridge, symbol, timeframe)
+                    result = await run_signal_cycle(bridge, symbol, timeframe)
                 except Exception:
                     logger.error("Cycle failed for %s", symbol, exc_info=True)
+                    result = None
+                if result:
+                    signals_found += 1
+                elif verbose:
+                    try:
+                        telegram_send(f"{symbol}: scan done, no signal found")
+                    except Exception:
+                        pass
                 await asyncio.sleep(1)
             _loop_cursor += 1
+            if _loop_cursor % pass_summary_every == 0:
+                next_label = f"{interval // 60} min" if interval >= 60 else f"{interval} sec"
+                open_count = len(_read_json(OPEN_SIGNALS_FILE, []))
+                _telegram_announce(
+                    f"SCAN PASS #{_loop_cursor}\n"
+                    f"Markets scanned: {len(symbols)}/{len(symbols)}\n"
+                    f"New signals: {signals_found}\n"
+                    f"Open signals: {open_count}\n"
+                    f"Next pass in: ~{next_label}"
+                )
             if time.time() - _last_status >= status_every:
                 _last_status = time.time()
                 try:
