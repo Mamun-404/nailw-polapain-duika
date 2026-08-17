@@ -24,7 +24,10 @@ async def main() -> int:
     if not connected:
         print(f"feed connect failed: {message}")
         return 1
-    symbols = [x.strip() for x in os.getenv("EXNESS_SYMBOLS", "EURUSD,GBPUSD,USDJPY,XAUUSD").split(",") if x.strip()]
+    symbols = [x.strip() for x in os.getenv("EXNESS_SYMBOLS", "").split(",") if x.strip()]
+    if not symbols:
+        symbols = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "XAUUSD", "US30", "US500", "NAS100", "GER40", "UK100", "BTCUSD", "ETHUSD", "USOIL"]
+        print("env EXNESS_SYMBOLS empty - using default 13-market list", flush=True)
     timeframe = int(os.getenv("EXNESS_TIMEFRAME_MINUTES", "60"))
     print(f"run_once | connected | symbols={len(symbols)} timeframe={timeframe}m")
 
