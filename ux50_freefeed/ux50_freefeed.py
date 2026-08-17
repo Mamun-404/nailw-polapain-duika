@@ -2236,6 +2236,7 @@ async def run_signal_cycle(bridge: FreeFeedBridge, symbol: str, timeframe: int =
         f"Conf: `{confidence:.0f}%` | RR: `{rr:.2f}`\n"
         f"MTF 4H confirmed • `{session_now.strftime('%H:%M')} UTC`"
     )
+    _telegram_typing()
     notification_sent = telegram_send(message)
     chart_path = _render_signal_chart(symbol, candles, direction_label, entry, sl, tp, timeframe)
     chart_sent = telegram_send_photo(
@@ -2277,6 +2278,28 @@ def _telegram_announce(text):
     except Exception:
         logger.warning("Telegram announce failed", exc_info=True)
         return False
+
+
+_LAST_TYPING = [0.0]
+
+
+def _telegram_typing():
+    """Show 'typing...' animation in Telegram before messages (rate-limited)."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        return
+    if time.time() - _LAST_TYPING[0] < 4.0:
+        return
+    _LAST_TYPING[0] = time.time()
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendChatAction",
+            data={"chat_id": chat_id, "action": "typing"},
+            timeout=10,
+        )
+    except Exception:
+        pass
 
 
 async def main():
@@ -2327,6 +2350,8 @@ async def main():
             except Exception:
                 logger.error("Open-signal settlement pass failed", exc_info=True)
             signals_found = 0
+            scanned_this_pass = 0
+            live_every = int(os.getenv("EXNESS_TELEGRAM_LIVE_EVERY", "10"))
             for symbol in symbols:
                 try:
                     result = await run_signal_cycle(bridge, symbol, timeframe)
@@ -2340,6 +2365,13 @@ async def main():
                         telegram_send(f"{symbol}: scan done, no signal found")
                     except Exception:
                         pass
+                scanned_this_pass += 1
+                if live_every > 0 and (scanned_this_pass % live_every == 0 or scanned_this_pass == len(symbols)):
+                    _telegram_typing()
+                    _telegram_announce(
+                        f"LIVE SCAN {scanned_this_pass}/{len(symbols)} | {symbol} | "
+                        f"{datetime.now(timezone.utc).strftime('%H:%M:%S')} UTC | signals so far: {signals_found}"
+                    )
                 await asyncio.sleep(1)
             _loop_cursor += 1
             if _loop_cursor % pass_summary_every == 0:
