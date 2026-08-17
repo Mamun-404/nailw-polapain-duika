@@ -168,9 +168,13 @@
     "timeframe": 15,
     "confidence": 99.0,
     "opened_at": 1786750817,
-    "status": "open",
+    "status": "settled",
     "notification_sent": true,
-    "chart_sent": true
+    "chart_sent": true,
+    "result": "loss",
+    "result_basis": "SL hit",
+    "exit_price": 1882.46859,
+    "settled_at": 1786976032
   },
   {
     "id": "ETHUSD-1786751737",
@@ -182,8 +186,28 @@
     "timeframe": 15,
     "confidence": 94.2,
     "opened_at": 1786751737,
-    "status": "open",
+    "status": "settled",
     "notification_sent": true,
-    "chart_sent": true
+    "chart_sent": true,
+    "result": "loss",
+    "result_basis": "SL hit",
+    "exit_price": 1881.90037,
+    "settled_at": 1786976032
+  },
+  {
+    "id": "XAUUSD-1786976053",
+    "symbol": "XAUUSD",
+    "direction": "UP 🟩",
+    "entry": 4408.95,
+    "sl": 4383.32,
+    "tp": 4452.4,
+    "timeframe": 60,
+    "confidence": 99.0,
+    "opened_at": 1786976053,
+    "status": "open",
+    "last_status": "AT ENTRY",
+    "current_price": 4408.95,
+    "notification_sent": false,
+    "chart_sent": false
   }
 ]

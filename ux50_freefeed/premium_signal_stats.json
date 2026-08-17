@@ -54,12 +54,12 @@
     "last_settled_at": 1786748427
   },
   "ETHUSD": {
-    "signals": 1,
+    "signals": 3,
     "wins": 0,
-    "losses": 1,
+    "losses": 3,
     "pushes": 0,
-    "consecutive_losses": 1,
+    "consecutive_losses": 3,
     "last_result": "loss",
-    "last_settled_at": 1786750625
+    "last_settled_at": 1786976032
   }
 }

@@ -2149,9 +2149,14 @@ async def run_signal_cycle(bridge: FreeFeedBridge, symbol: str, timeframe: int =
         return None
     up_side = "UP" in str(direction).upper() or "BUY" in str(direction).upper()
     tf_closes = [float(c["close"]) for c in candles]
-    ema21_list = _calc_ema(tf_closes, 21)
-    if len(ema21_list) >= 3:
-        ema_slope = ema21_list[-1] - ema21_list[-3]
+    ema_mult = 2.0 / 22.0
+    ema21_val = tf_closes[0]
+    ema21_hist = [ema21_val]
+    for price in tf_closes[1:]:
+        ema21_val = (price - ema21_val) * ema_mult + ema21_val
+        ema21_hist.append(ema21_val)
+    if len(ema21_hist) >= 4:
+        ema_slope = ema21_hist[-1] - ema21_hist[-4]
         if up_side and ema_slope < 0:
             logger.info("Skipped %s: EMA21 falling, against BUY direction", symbol)
             return None
