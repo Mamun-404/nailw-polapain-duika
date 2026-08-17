@@ -60,3 +60,8 @@ ux50_freefeed/bot.log
 ux50_freefeed/stats_live.json
 ux50_freefeed/open_live.json
 ux50_freefeed/history_live.json
+
+# runtime state (untracked - bot regenerates, keeps Replit pulls conflict-free)
+ux50_freefeed/premium_signal_stats.json
+ux50_freefeed/premium_open_signals.json
+ux50_freefeed/premium_signal_history.json
