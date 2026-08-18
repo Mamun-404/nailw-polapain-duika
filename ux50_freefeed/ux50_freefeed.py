@@ -2358,6 +2358,28 @@ async def run_signal_cycle(bridge: FreeFeedBridge, symbol: str, timeframe: int =
     entry, sl, tp = levels_from_candles(symbol, candles, direction, bid=quote["bid"], ask=quote["ask"])
     if entry is None or sl is None or tp is None:
         return None
+    # professional anchor gate: entry must sit near support (pullback) or
+    # at/above resistance (breakout). No-man's-land entries = chasing = reject.
+    try:
+        anchor_lows, anchor_highs = _find_swings(candles, window=3, lookback=70)
+        atr14 = _calc_atr(candles, 14) or 0.0
+        if atr14 > 0:
+            if up_side:
+                near_support = any(0 < (entry - l) <= atr14 * 1.5 for l in anchor_lows if l <= entry)
+                breakout = any(0 <= (h - entry) <= atr14 * 0.8 for h in anchor_highs if h >= entry)
+                below_anchor = any((entry - l) <= atr14 * 0.6 for l in anchor_lows if l <= entry)
+                if not (near_support or breakout or below_anchor):
+                    logger.info("Skipped %s: BUY entry in no-man's-land (chasing), no anchor", symbol)
+                    return None
+            else:
+                near_resistance = any(0 < (h - entry) <= atr14 * 1.5 for h in anchor_highs if h >= entry)
+                breakdown = any(0 <= (entry - l) <= atr14 * 0.8 for l in anchor_lows if l <= entry)
+                above_anchor = any((h - entry) <= atr14 * 0.6 for h in anchor_highs if h >= entry)
+                if not (near_resistance or breakdown or above_anchor):
+                    logger.info("Skipped %s: SELL entry in no-man's-land (chasing), no anchor", symbol)
+                    return None
+    except Exception as exc:
+        logger.info("Anchor gate error %s: %s", symbol, exc)
     risk = abs(entry - sl)
     reward = abs(tp - entry)
     rr = reward / max(risk, 1e-12)
