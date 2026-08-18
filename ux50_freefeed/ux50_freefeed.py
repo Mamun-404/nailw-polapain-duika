@@ -481,8 +481,35 @@ def _render_signal_chart(symbol, candles, direction, entry, sl, tp, timeframe=60
         axis.axhline(entry, color="#f8fafc", linewidth=1.15, linestyle=(0, (5, 3)), label=f"Entry {entry:.{digits}f}")
         axis.axhline(sl, color="#fb7185", linewidth=1.15, linestyle=(0, (5, 3)), label=f"SL {sl:.{digits}f}")
         axis.axhline(tp, color="#4ade80", linewidth=1.15, linestyle=(0, (5, 3)), label=f"TP {tp:.{digits}f}")
+        # professional setup markers
+        try:
+            swing_lows, swing_highs = _find_swings(candles, window=3, lookback=50)
+            last_close = float(recent[-1]["close"])
+            nearby_lows = [l for l in swing_lows if l < last_close]
+            nearby_highs = [h for h in swing_highs if h > last_close]
+            if nearby_lows:
+                nearest_low = max(nearby_lows)
+                axis.axhline(nearest_low, color="#94a3b8", linewidth=0.8, linestyle=(0, (2, 4)), alpha=0.55)
+                axis.text(len(recent) - 0.5, nearest_low, f"  SUP {nearest_low:.{digits}f}", color="#94a3b8", fontsize=7, va="center")
+            if nearby_highs:
+                nearest_high = min(nearby_highs)
+                axis.axhline(nearest_high, color="#94a3b8", linewidth=0.8, linestyle=(0, (2, 4)), alpha=0.55)
+                axis.text(len(recent) - 0.5, nearest_high, f"  RES {nearest_high:.{digits}f}", color="#94a3b8", fontsize=7, va="center")
+        except Exception:
+            pass
+        entry_arrow_color = "#22c55e" if "UP" in str(direction).upper() or "BUY" in str(direction).upper() else "#ef4444"
+        axis.annotate(
+            "", xy=(len(recent) - 2.2, entry), xytext=(len(recent) - 0.2, entry),
+            arrowprops=dict(arrowstyle="->", color=entry_arrow_color, lw=2.4),
+        )
+        axis.annotate(
+            "SETUP", xy=(len(recent) - 1, entry),
+            xytext=(len(recent) - 6, 0.96), textcoords=("data", "axes fraction"),
+            color="#e2e8f0", fontsize=9, fontweight="bold", ha="center",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="#0f172a", edgecolor="#475569", alpha=0.92),
+        )
         axis.set_title(
-            f"{symbol}  |  {_timeframe_label(timeframe)}  |  {direction}  |  UX50 Signal",
+            f"{symbol}  |  {_timeframe_label(timeframe)}  |  {direction}  |  UX50 SIGNAL SETUP",
             color="#f8fafc",
             fontsize=13,
             fontweight="bold",
@@ -513,6 +540,137 @@ def _render_signal_chart(symbol, candles, direction, entry, sl, tp, timeframe=60
         return image_path
     except Exception as exc:
         logger.warning("Signal chart render failed: %s", exc)
+        return None
+
+
+def _render_result_chart(signal, candles, result, exit_price, exit_at):
+    """Render the trade outcome chart: entry -> exit path with SL/TP hit marked."""
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Rectangle
+
+        symbol = str(signal.get("symbol", ""))
+        direction = str(signal.get("direction", "")).upper()
+        is_buy = "UP" in direction or "BUY" in direction
+        entry = float(signal.get("entry", 0))
+        sl = float(signal.get("sl", 0))
+        tp = float(signal.get("tp", 0))
+        opened_at = int(signal.get("opened_at", 0))
+        if not candles or entry <= 0:
+            return None
+        start_idx = 0
+        for i, c in enumerate(candles):
+            if int(c.get("at", 0)) >= opened_at:
+                start_idx = max(0, i - 2)
+                break
+        end_idx = len(candles) - 1
+        for i, c in enumerate(candles):
+            if int(c.get("at", 0)) >= exit_at:
+                end_idx = i
+                break
+        recent = candles[start_idx:end_idx + 1]
+        if len(recent) < 4:
+            return None
+        fig, (axis, volume_axis) = plt.subplots(
+            2, 1, figsize=(11, 6.5), dpi=150, sharex=True,
+            gridspec_kw={"height_ratios": [4, 1], "hspace": 0.05},
+        )
+        fig.patch.set_facecolor("#08111f")
+        for current_axis in (axis, volume_axis):
+            current_axis.set_facecolor("#0d1b2a")
+            current_axis.tick_params(colors="#cbd5e1", labelsize=8)
+            for spine in current_axis.spines.values():
+                spine.set_color("#334155")
+            current_axis.grid(color="#64748b", alpha=0.18, linewidth=0.6)
+        candle_dates = []
+        for index, candle in enumerate(recent):
+            timestamp = candle.get("at")
+            candle_dates.append(
+                datetime.fromtimestamp(float(timestamp), tz=timezone.utc)
+                if timestamp else datetime.now(timezone.utc)
+            )
+            opened = float(candle["open"]); high = float(candle["high"])
+            low = float(candle["low"]); close = float(candle["close"])
+            color = "#22c55e" if close >= opened else "#ef4444"
+            axis.vlines(index, low, high, color=color, linewidth=1.0, zorder=2)
+            body_bottom = min(opened, close)
+            body_height = max(abs(close - opened), (high - low) * 0.015, 1e-12)
+            axis.add_patch(
+                Rectangle((index - 0.32, body_bottom), 0.64, body_height,
+                          facecolor=color, edgecolor=color, linewidth=0.7, alpha=0.95, zorder=3)
+            )
+            volume_axis.bar(index, float(candle.get("volume", 0.0) or 0.0), color=color, width=0.64, alpha=0.55)
+        digits = _price_digits(symbol)
+        entry_idx = 0
+        for i, c in enumerate(recent):
+            if int(c.get("at", 0)) >= opened_at:
+                entry_idx = i
+                break
+        exit_idx = len(recent) - 1
+        # entry line + arrow
+        axis.axhline(entry, color="#f8fafc", linewidth=1.15, linestyle=(0, (5, 3)))
+        axis.annotate(
+            "ENTRY", xy=(entry_idx, entry), xytext=(entry_idx, entry),
+            color="#f8fafc", fontsize=9, fontweight="bold", ha="center", va="bottom",
+            bbox=dict(boxstyle="round,pad=0.25", facecolor="#08111f", edgecolor="#f8fafc", alpha=0.9),
+        )
+        arrow_color = "#22c55e" if is_buy else "#ef4444"
+        axis.annotate(
+            "", xy=(entry_idx - 1.2, entry), xytext=(entry_idx + 1.2, entry),
+            arrowprops=dict(arrowstyle="->", color=arrow_color, lw=2.2),
+        )
+        # SL/TP lines
+        axis.axhline(sl, color="#fb7185", linewidth=1.15, linestyle=(0, (5, 3)))
+        axis.axhline(tp, color="#4ade80", linewidth=1.15, linestyle=(0, (5, 3)))
+        axis.text(len(recent) - 0.5, sl, f"  SL {sl:.{digits}f}", color="#fb7185", fontsize=8, va="center")
+        axis.text(len(recent) - 0.5, tp, f"  TP {tp:.{digits}f}", color="#4ade80", fontsize=8, va="center")
+        # price path entry -> exit
+        axis.plot([entry_idx, exit_idx], [entry, exit_price], color="#94a3b8", linewidth=1.2, linestyle="--", alpha=0.8)
+        # outcome marker at the hit candle
+        if result == "win":
+            axis.scatter([exit_idx], [tp], s=140, color="#22c55e", marker="o", zorder=6, edgecolor="#08111f")
+            axis.annotate("TP HIT", xy=(exit_idx, tp), xytext=(exit_idx + 1.2, tp),
+                          color="#22c55e", fontsize=10, fontweight="bold", va="center",
+                          arrowprops=dict(arrowstyle="->", color="#22c55e"))
+        elif result == "loss":
+            axis.scatter([exit_idx], [sl], s=150, color="#ef4444", marker="X", zorder=6, edgecolor="#08111f")
+            axis.annotate("SL HIT", xy=(exit_idx, sl), xytext=(exit_idx + 1.2, sl),
+                          color="#ef4444", fontsize=10, fontweight="bold", va="center",
+                          arrowprops=dict(arrowstyle="->", color="#ef4444"))
+        else:
+            axis.scatter([exit_idx], [exit_price], s=120, color="#eab308", marker="o", zorder=6, edgecolor="#08111f")
+            axis.annotate("EXPIRY", xy=(exit_idx, exit_price), xytext=(exit_idx + 1.2, exit_price),
+                          color="#eab308", fontsize=10, fontweight="bold", va="center",
+                          arrowprops=dict(arrowstyle="->", color="#eab308"))
+        outcome_tag = "PROFIT" if result == "win" else ("LOSS" if result == "loss" else "PUSH")
+        outcome_color = "#22c55e" if result == "win" else ("#ef4444" if result == "loss" else "#eab308")
+        axis.text(0.01, 0.955, f"{outcome_tag}  |  {symbol}  {('BUY' if is_buy else 'SELL')}  |  {_timeframe_label(signal.get('timeframe', 0))}",
+                  transform=axis.transAxes, color=outcome_color, fontsize=12, fontweight="bold",
+                  bbox=dict(boxstyle="round,pad=0.35", facecolor="#08111f", edgecolor=outcome_color, alpha=0.95))
+        axis.set_title(
+            f"{symbol} | Trade result | Entry {entry:.{digits}f} -> Exit {exit_price:.{digits}f} | {outcome_tag}",
+            color="#f8fafc", fontsize=12, fontweight="bold", loc="left", pad=12,
+        )
+        axis.set_ylabel("Price", color="#cbd5e1")
+        volume_axis.set_ylabel("Volume", color="#cbd5e1")
+        axis.set_xlim(-0.5, len(recent) + 2.5)
+        axis.margins(y=0.12)
+        tick_count = min(6, len(recent))
+        tick_indexes = [round(i * (len(recent) - 1) / max(1, tick_count - 1)) for i in range(tick_count)]
+        axis.set_xticks(tick_indexes); axis.set_xticklabels([])
+        volume_axis.set_xticks(tick_indexes)
+        volume_axis.set_xticklabels([candle_dates[i].strftime("%d %b %H:%M") for i in tick_indexes], color="#cbd5e1", fontsize=8)
+        volume_axis.set_xlim(-0.5, len(recent) + 2.5)
+        fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.12, hspace=0.05)
+        image_path = tempfile.NamedTemporaryFile(prefix="ux50_result_", suffix=".png", delete=False).name
+        fig.savefig(image_path, format="png")
+        plt.close(fig)
+        return image_path
+    except Exception as exc:
+        logger.warning("Result chart render failed: %s", exc)
         return None
 
 
@@ -1720,6 +1878,7 @@ def _settle_signals_from_candles(candles, symbol=None, timeframe=None):
         result = None
         result_basis = None
         exit_price = None
+        exit_at = int(time.time())
         direction = str(signal.get("direction", "")).upper()
         lookahead = max(1, int(os.getenv("EXNESS_OUTCOME_LOOKAHEAD", "12")))
         for candle in future[:lookahead]:
@@ -1732,22 +1891,26 @@ def _settle_signals_from_candles(candles, symbol=None, timeframe=None):
                 result = "loss"  # conservative when both occur in one candle
                 result_basis = "SL+TP same candle (conservative SL)"
                 exit_price = sl
+                exit_at = int(candle.get("at", 0))
                 break
             if hit_sl:
                 result = "loss"
                 result_basis = "SL hit"
                 exit_price = sl
+                exit_at = int(candle.get("at", 0))
                 break
             if hit_tp:
                 result = "win"
                 result_basis = "TP hit"
                 exit_price = tp
+                exit_at = int(candle.get("at", 0))
                 break
         if result is None and len(future) >= lookahead:
             # Do not leave a signal open forever. At expiry, compare the last
             # closed candle with entry and report the result transparently.
             expiry_candle = future[lookahead - 1]
             exit_price = float(expiry_candle.get("close", signal.get("entry", 0.0)))
+            exit_at = int(expiry_candle.get("at", 0))
             entry_price = float(signal.get("entry", 0.0))
             is_buy = "UP" in direction or "BUY" in direction
             if abs(exit_price - entry_price) < max(abs(entry_price) * 1e-6, 1e-9):
@@ -1788,12 +1951,23 @@ def _settle_signals_from_candles(candles, symbol=None, timeframe=None):
                 break
         outcome_label = {"win": "PROFIT", "loss": "LOSS", "push": "PUSH"}[result]
         result_icon = {"win": "✅", "loss": "❌", "push": "➖"}[result]
+        _telegram_typing()
         telegram_send(
             f"{result_icon} *{outcome_label}*\n"
             f"{symbol} • {direction} • {_timeframe_label(signal.get('timeframe', 0))}\n"
             f"Entry: `{signal.get('entry')}` → Exit: `{exit_price}`\n"
             f"{result_basis}"
         )
+        result_chart_path = _render_result_chart(signal, candles, result, exit_price, exit_at)
+        if result_chart_path:
+            telegram_send_photo(
+                result_chart_path,
+                f"{symbol} {outcome_label} | {result_basis} | Entry {signal.get('entry')} -> {exit_price}",
+            )
+            try:
+                os.unlink(result_chart_path)
+            except OSError:
+                pass
         changed += 1
     if changed:
         _write_json(PREMIUM_STATS_FILE, stats)
@@ -2314,7 +2488,7 @@ async def main():
         logger.error(message)
         return
     logger.info("Signal-only mode enabled; no orders will be placed")
-    symbols = [x.strip() for x in os.getenv("EXNESS_SYMBOLS", "EURUSD,GBPUSD,USDJPY,XAUUSD").split(",") if x.strip()]
+    symbols = [x.strip() for x in os.getenv("EXNESS_SYMBOLS", "EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,NZDUSD,USDCHF,EURGBP,EURJPY,GBPJPY,EURCHF,GBPCHF,EURAUD,EURNZD,EURCAD,GBPAUD,GBPNZD,GBPCAD,AUDJPY,AUDNZD,AUDCAD,AUDCHF,NZDJPY,NZDCAD,NZDCHF,CADJPY,CADCHF,CHFJPY,USDZAR,USDTRY,USDMXN,USDSGD,USDPLN,USDNOK,USDSEK,USDCNH,USDINR,XAUUSD,XAGUSD,XPTUSD,XPDUSD,USOIL,UKOIL,NGAS,US30,US500,NAS100,GER40,FR40,EU50,UK100,JPN225,HK50,AU200,ES35,BTCUSD,ETHUSD,XRPUSD,SOLUSD,DOGEUSD,LTCUSD,BCHUSD").split(",") if x.strip()]
     timeframe = int(os.getenv("EXNESS_TIMEFRAME_MINUTES", "60"))
     interval = max(30, int(os.getenv("EXNESS_SCAN_SECONDS", "60")))
     status_every = int(os.getenv("EXNESS_STATUS_EVERY_SECONDS", "1800"))
