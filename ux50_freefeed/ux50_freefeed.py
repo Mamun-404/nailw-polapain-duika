@@ -503,18 +503,41 @@ def _render_signal_chart(symbol, candles, direction, entry, sl, tp, timeframe=60
             arrowprops=dict(arrowstyle="->", color=entry_arrow_color, lw=2.4),
         )
         axis.annotate(
-            "SETUP", xy=(len(recent) - 1, entry),
-            xytext=(len(recent) - 6, 0.96), textcoords=("data", "axes fraction"),
-            color="#e2e8f0", fontsize=9, fontweight="bold", ha="center",
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="#0f172a", edgecolor="#475569", alpha=0.92),
+             "SETUP", xy=(len(recent) - 1, entry),
+             xytext=(len(recent) - 6, 0.96), textcoords=("data", "axes fraction"),
+             color="#e2e8f0", fontsize=9, fontweight="bold", ha="center",
+             bbox=dict(boxstyle="round,pad=0.3", facecolor="#0f172a", edgecolor="#475569", alpha=0.92),
         )
+        # ── SL/TP zone shading (pro style marking) ─────────────────────
+        x_start_zone, x_end_zone = -1, len(recent) - 0.5
+        tp_zone_top, tp_zone_bot = max(tp, entry), min(tp, entry)
+        sl_zone_top, sl_zone_bot = max(sl, entry), min(sl, entry)
+        axis.fill_between(
+             [x_start_zone, x_end_zone], tp_zone_bot, tp_zone_top,
+             color="#22c55e", alpha=0.10, zorder=1, linewidth=0,
+        )
+        axis.fill_between(
+             [x_start_zone, x_end_zone], sl_zone_bot, sl_zone_top,
+             color="#fb7185", alpha=0.10, zorder=1, linewidth=0,
+        )
+        # right-edge labels
+        text_x = len(recent) - 0.35
+        axis.text(text_x, entry, " ENTRY", color="#f8fafc", fontsize=8.5, fontweight="bold",
+                   va="center", ha="right", zorder=6,
+                   bbox=dict(boxstyle="round,pad=0.15", facecolor="#0f172a", edgecolor="#f8fafc", alpha=0.95))
+        axis.text(text_x, sl, " SL", color="#fb7185", fontsize=8.5, fontweight="bold",
+                   va="center", ha="right", zorder=6,
+                   bbox=dict(boxstyle="round,pad=0.15", facecolor="#0f172a", edgecolor="#fb7185", alpha=0.95))
+        axis.text(text_x, tp, " TP", color="#4ade80", fontsize=8.5, fontweight="bold",
+                   va="center", ha="right", zorder=6,
+                   bbox=dict(boxstyle="round,pad=0.15", facecolor="#0f172a", edgecolor="#4ade80", alpha=0.95))
         axis.set_title(
-            f"{symbol}  |  {_timeframe_label(timeframe)}  |  {direction}  |  UX50 SIGNAL SETUP",
-            color="#f8fafc",
-            fontsize=13,
-            fontweight="bold",
-            loc="left",
-            pad=12,
+             f"{symbol}  |  {_timeframe_label(timeframe)}  |  {direction}  |  UX50 SIGNAL SETUP",
+             color="#f8fafc",
+             fontsize=13,
+             fontweight="bold",
+             loc="left",
+             pad=12,
         )
         axis.set_ylabel("Price", color="#cbd5e1")
         volume_axis.set_ylabel("Volume", color="#cbd5e1")
@@ -625,8 +648,23 @@ def _render_result_chart(signal, candles, result, exit_price, exit_at):
         # SL/TP lines
         axis.axhline(sl, color="#fb7185", linewidth=1.15, linestyle=(0, (5, 3)))
         axis.axhline(tp, color="#4ade80", linewidth=1.15, linestyle=(0, (5, 3)))
-        axis.text(len(recent) - 0.5, sl, f"  SL {sl:.{digits}f}", color="#fb7185", fontsize=8, va="center")
-        axis.text(len(recent) - 0.5, tp, f"  TP {tp:.{digits}f}", color="#4ade80", fontsize=8, va="center")
+        # ── SL/TP zone shading (pro style marking) ─────────────────────
+        axis.fill_between([-1, len(recent) - 0.5],
+                          min(tp, entry), max(tp, entry),
+                          color="#22c55e", alpha=0.10, zorder=1, linewidth=0)
+        axis.fill_between([-1, len(recent) - 0.5],
+                          min(sl, entry), max(sl, entry),
+                          color="#fb7185", alpha=0.10, zorder=1, linewidth=0)
+        text_x = len(recent) - 0.35
+        axis.text(text_x, entry, " ENTRY", color="#f8fafc", fontsize=8.5, fontweight="bold",
+                  va="center", ha="right", zorder=6,
+                  bbox=dict(boxstyle="round,pad=0.15", facecolor="#0f172a", edgecolor="#f8fafc", alpha=0.95))
+        axis.text(text_x, sl, f" SL {sl:.{digits}f}", color="#fb7185", fontsize=8.5, fontweight="bold",
+                  va="center", ha="right", zorder=6,
+                  bbox=dict(boxstyle="round,pad=0.15", facecolor="#0f172a", edgecolor="#fb7185", alpha=0.95))
+        axis.text(text_x, tp, f" TP {tp:.{digits}f}", color="#4ade80", fontsize=8.5, fontweight="bold",
+                  va="center", ha="right", zorder=6,
+                  bbox=dict(boxstyle="round,pad=0.15", facecolor="#0f172a", edgecolor="#4ade80", alpha=0.95))
         # price path entry -> exit
         axis.plot([entry_idx, exit_idx], [entry, exit_price], color="#94a3b8", linewidth=1.2, linestyle="--", alpha=0.8)
         # outcome marker at the hit candle
