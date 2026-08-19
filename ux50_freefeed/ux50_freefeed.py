@@ -2351,7 +2351,11 @@ async def run_signal_cycle(bridge: FreeFeedBridge, symbol: str, timeframe: int =
         return None
     meta = dict(last_signal_meta)
     confidence = float(meta.get("confidence", 0.0) or 0.0)
-    min_confidence = float(os.getenv("EXNESS_MIN_SIGNAL_CONFIDENCE", "90"))
+    fam = _family_of(symbol)
+    min_confidence = float(os.getenv(
+        "EXNESS_CRYPTO_MIN_CONFIDENCE" if fam == "crypto" else "EXNESS_MIN_SIGNAL_CONFIDENCE",
+        "85" if fam == "crypto" else "90",
+    ))
     if confidence < min_confidence:
         logger.info("Skipped %s: confidence %.1f < %.1f", symbol, confidence, min_confidence)
         return None
@@ -2383,7 +2387,10 @@ async def run_signal_cycle(bridge: FreeFeedBridge, symbol: str, timeframe: int =
     risk = abs(entry - sl)
     reward = abs(tp - entry)
     rr = reward / max(risk, 1e-12)
-    min_rr = float(os.getenv("EXNESS_MIN_RR", "1.30"))
+    min_rr = float(os.getenv(
+        "EXNESS_CRYPTO_MIN_RR" if fam == "crypto" else "EXNESS_MIN_RR",
+        "1.30" if fam == "crypto" else "1.40",
+    ))
     if rr < min_rr:
         logger.info("Skipped %s: RR %.2f < %.2f", symbol, rr, min_rr)
         return None
