@@ -425,21 +425,18 @@ def _render_signal_chart(symbol, candles, direction, entry, sl, tp, timeframe=60
         recent = candles[-80:]
         if len(recent) < 10:
             return None
-        fig, (axis, volume_axis) = plt.subplots(
-            2,
+        fig, axis = plt.subplots(
+            1,
             1,
             figsize=(11, 6.5),
             dpi=150,
-            sharex=True,
-            gridspec_kw={"height_ratios": [4, 1], "hspace": 0.05},
         )
         fig.patch.set_facecolor("#08111f")
-        for current_axis in (axis, volume_axis):
-            current_axis.set_facecolor("#0d1b2a")
-            current_axis.tick_params(colors="#cbd5e1", labelsize=8)
-            for spine in current_axis.spines.values():
-                spine.set_color("#334155")
-            current_axis.grid(color="#64748b", alpha=0.18, linewidth=0.6)
+        axis.set_facecolor("#0d1b2a")
+        axis.tick_params(colors="#cbd5e1", labelsize=8)
+        for spine in axis.spines.values():
+            spine.set_color("#334155")
+        axis.grid(color="#64748b", alpha=0.18, linewidth=0.6)
 
         candle_dates = []
         for index, candle in enumerate(recent):
@@ -468,13 +465,6 @@ def _render_signal_chart(symbol, candles, direction, entry, sl, tp, timeframe=60
                     alpha=0.95,
                     zorder=3,
                 )
-            )
-            volume_axis.bar(
-                index,
-                float(candle.get("volume", 0.0) or 0.0),
-                color=color,
-                width=0.64,
-                alpha=0.55,
             )
 
         digits = _price_digits(symbol)
@@ -540,23 +530,19 @@ def _render_signal_chart(symbol, candles, direction, entry, sl, tp, timeframe=60
              pad=12,
         )
         axis.set_ylabel("Price", color="#cbd5e1")
-        volume_axis.set_ylabel("Volume", color="#cbd5e1")
-        volume_axis.set_xlabel("UTC time", color="#cbd5e1")
+        axis.set_xlabel("UTC time", color="#cbd5e1")
         axis.legend(loc="upper left", fontsize=8, facecolor="#0d1b2a", edgecolor="#475569", labelcolor="#e2e8f0")
         axis.set_xlim(-1, len(recent))
         axis.margins(y=0.08)
         tick_count = min(8, len(recent))
         tick_indexes = [round(i * (len(recent) - 1) / max(1, tick_count - 1)) for i in range(tick_count)]
         axis.set_xticks(tick_indexes)
-        axis.set_xticklabels([])
-        volume_axis.set_xticks(tick_indexes)
-        volume_axis.set_xticklabels(
+        axis.set_xticklabels(
             [candle_dates[index].strftime("%d %b\n%H:%M") for index in tick_indexes],
             color="#cbd5e1",
             fontsize=8,
         )
-        volume_axis.set_xlim(-1, len(recent))
-        fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.12, hspace=0.05)
+        fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.12)
         image_path = tempfile.NamedTemporaryFile(prefix="ux50_signal_", suffix=".png", delete=False).name
         fig.savefig(image_path, format="png")
         plt.close(fig)
@@ -597,17 +583,15 @@ def _render_result_chart(signal, candles, result, exit_price, exit_at):
         recent = candles[start_idx:end_idx + 1]
         if len(recent) < 4:
             return None
-        fig, (axis, volume_axis) = plt.subplots(
-            2, 1, figsize=(11, 6.5), dpi=150, sharex=True,
-            gridspec_kw={"height_ratios": [4, 1], "hspace": 0.05},
+        fig, axis = plt.subplots(
+            1, 1, figsize=(11, 6.5), dpi=150,
         )
         fig.patch.set_facecolor("#08111f")
-        for current_axis in (axis, volume_axis):
-            current_axis.set_facecolor("#0d1b2a")
-            current_axis.tick_params(colors="#cbd5e1", labelsize=8)
-            for spine in current_axis.spines.values():
-                spine.set_color("#334155")
-            current_axis.grid(color="#64748b", alpha=0.18, linewidth=0.6)
+        axis.set_facecolor("#0d1b2a")
+        axis.tick_params(colors="#cbd5e1", labelsize=8)
+        for spine in axis.spines.values():
+            spine.set_color("#334155")
+        axis.grid(color="#64748b", alpha=0.18, linewidth=0.6)
         candle_dates = []
         for index, candle in enumerate(recent):
             timestamp = candle.get("at")
@@ -625,7 +609,6 @@ def _render_result_chart(signal, candles, result, exit_price, exit_at):
                 Rectangle((index - 0.32, body_bottom), 0.64, body_height,
                           facecolor=color, edgecolor=color, linewidth=0.7, alpha=0.95, zorder=3)
             )
-            volume_axis.bar(index, float(candle.get("volume", 0.0) or 0.0), color=color, width=0.64, alpha=0.55)
         digits = _price_digits(symbol)
         entry_idx = 0
         for i, c in enumerate(recent):
@@ -693,16 +676,14 @@ def _render_result_chart(signal, candles, result, exit_price, exit_at):
             color="#f8fafc", fontsize=12, fontweight="bold", loc="left", pad=12,
         )
         axis.set_ylabel("Price", color="#cbd5e1")
-        volume_axis.set_ylabel("Volume", color="#cbd5e1")
+        axis.set_xlabel("UTC time", color="#cbd5e1")
         axis.set_xlim(-0.5, len(recent) + 2.5)
         axis.margins(y=0.12)
         tick_count = min(6, len(recent))
         tick_indexes = [round(i * (len(recent) - 1) / max(1, tick_count - 1)) for i in range(tick_count)]
-        axis.set_xticks(tick_indexes); axis.set_xticklabels([])
-        volume_axis.set_xticks(tick_indexes)
-        volume_axis.set_xticklabels([candle_dates[i].strftime("%d %b %H:%M") for i in tick_indexes], color="#cbd5e1", fontsize=8)
-        volume_axis.set_xlim(-0.5, len(recent) + 2.5)
-        fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.12, hspace=0.05)
+        axis.set_xticks(tick_indexes)
+        axis.set_xticklabels([candle_dates[i].strftime("%d %b %H:%M") for i in tick_indexes], color="#cbd5e1", fontsize=8)
+        fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.12)
         image_path = tempfile.NamedTemporaryFile(prefix="ux50_result_", suffix=".png", delete=False).name
         fig.savefig(image_path, format="png")
         plt.close(fig)
